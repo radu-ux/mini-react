@@ -1,0 +1,11 @@
+{
+  "name": "react-from-scratch",
+  "source": "./index.html",
+  "scripts": {
+    "start": "parcel"
+  },
+  "browserslist": "> 0.25%, not dead",
+  "devDependencies": {
+    "parcel": "^2.12.0"
+  }
+}
