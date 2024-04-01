@@ -39,7 +39,7 @@ function updateDom(dom, prevProps, nextProps) {
     )
     .forEach((event) => {
       const eventName = event.toLowerCase().substring(2)
-      document.removeEventListener(eventName, prevProps[eventName])
+      dom.removeEventListener(eventName, prevProps[event])
     })
 
   // Remove old attributes
@@ -120,10 +120,21 @@ function commitWork(fiber) {
   commitWork(fiber.sibling)
 }
 
+function resetCurrentRoot() {
+  let root = wipRoot.child
+  while (root.parent) {
+    root.reconcileSibling = undefined
+    root = root.parent
+  }
+
+  currentRoot = root
+}
+
 function commitRoot() {
   deletions.forEach(commitWork)
   commitWork(wipRoot.child)
-  currentRoot = wipRoot
+  resetCurrentRoot()
+  // currentRoot = wipRoot
   wipRoot = null
   commitEffects()
 }
@@ -183,6 +194,7 @@ function reconcileChildren(wipFiber, children) {
   let childIndex = 0
   let oldFiber = wipFiber.alternate && wipFiber.alternate.child
   let prevSibiling = null
+  // TO DO: check oldFiber.props.onClick === onClickFn
 
   while (childIndex < children.length || oldFiber) {
     let newFiber = null
@@ -238,7 +250,10 @@ function updateFunctionComponent(fiber) {
   wipFiber = fiber
   wipFiber.hooks = []
   hookIndex = 0
-  const children = [fiber.type(fiber.props)].flat()
+  const isFragment = fiber.type === Symbol.for('react.fragment')
+  const children = isFragment
+    ? fiber.props.children
+    : [fiber.type(fiber.props)].flat()
   reconcileChildren(fiber, children)
 }
 
@@ -251,8 +266,9 @@ function updateHostComponent(fiber) {
 
 function performUnitOfWork(fiber) {
   const isComponent = typeof fiber.type === 'function'
+  const isFragment = fiber.type === Symbol.for('react.fragment')
 
-  if (isComponent) {
+  if (isComponent || isFragment) {
     updateFunctionComponent(fiber)
   } else {
     updateHostComponent(fiber)
@@ -266,7 +282,7 @@ function performUnitOfWork(fiber) {
   // Return any valid sibling as the next unit of work
   let nextFiber = fiber
   while (nextFiber) {
-    if (nextFiber.sibling) {
+    if (nextFiber.sibling && nextFiber.reconcileSibling !== false) {
       return nextFiber.sibling
     }
 
@@ -292,23 +308,44 @@ function workLoop(deadline) {
 /** END OF RECONCILIATION PHASE */
 
 /** HOOKS */
-function updateFiberInCurrentRoot(fiber, updateFiber) {
-  let searchFiber = currentRoot
-  while (searchFiber.type !== fiber.type) {
-    if (searchFiber.child) {
-      searchFiber = searchFiber.child
-    } else if (searchFiber.sibling) {
-      searchFiber = searchFiber.sibling
-    }
+
+export function updateFiberInVDOM(fiber, current) {
+  if (!current) {
+    return
   }
 
-  searchFiber.parent.child = updateFiber
+  if (current.child && current.child.type === fiber.type) {
+    if (current.child.sibling) {
+      fiber.sibling = current.child.sibling
+    }
+    current.child = fiber
+    fiber.parent = current
 
-  return searchFiber
+    return
+  }
+
+  if (current.sibling && current.sibling.type === fiber.type) {
+    if (current.sibling.sibling) {
+      fiber.sibling = current.sibling.sibling
+    }
+    current.sibling = fiber
+    fiber.parent = current.parent
+
+    return
+  }
+
+  if (current.child) {
+    updateFiberInVDOM(fiber, current.child)
+  } else if (current.sibling) {
+    updateFiberInVDOM(fiber, current.sibling)
+  } else if (current.parent) {
+    updateFiberInVDOM(fiber, current.parent.sibling)
+  }
 }
 
-function useReducer(initial, reducerFn) {
-  const currentFiber = wipFiber
+export function useReducer(initial, reducerFn) {
+  let currentFiber = wipFiber
+  let currentHookIndex = hookIndex
   const oldHook =
     wipFiber &&
     wipFiber.alternate &&
@@ -331,11 +368,17 @@ function useReducer(initial, reducerFn) {
   const dispatch = (action) => {
     hook.queue.push(action)
     nextUnitOfWork = {
-      ...currentFiber,
+      type: currentFiber.type,
+      hooks: currentFiber.hooks,
+      props: currentFiber.props,
+      dom: currentFiber.dom,
       alternate: currentFiber,
+      reconcileSibling: false,
+      effectTag: 'UPDATE',
     }
-    updateFiberInCurrentRoot(currentFiber, nextUnitOfWork)
     wipRoot = { ...currentRoot }
+    updateFiberInVDOM(nextUnitOfWork, wipRoot)
+    wipRoot = nextUnitOfWork
     deletions = []
   }
 
@@ -386,6 +429,20 @@ function useMemo(cb, deps) {
 
 function useCallback(cb, deps) {
   return useMemo(() => cb, deps)
+}
+
+function useSyncExternalStore(subscribe, getSnapshot) {
+  const [state, setState] = useState(getSnapshot())
+
+  useEffect(() => {
+    const unsubscribe = subscribe(setState)
+
+    return () => {
+      unsubscribe()
+    }
+  }, [setState])
+
+  return state
 }
 
 function useEffect(effect, deps) {
@@ -466,6 +523,8 @@ export const React = {
   useRef,
   useMemo,
   useCallback,
+  useSyncExternalStore,
+  Fragment: Symbol.for('react.fragment'),
 }
 /** END OF REACT DEFINITION  */
 
