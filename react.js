@@ -19,6 +19,7 @@ let currentRoot = null
 let nextUnitOfWork = null
 let deletions = null
 let effects = []
+let fibersWithEffects = []
 let oldEffects = []
 let hookIndex = 0
 
@@ -147,7 +148,7 @@ function render(container, element) {
     },
     alternate: currentRoot,
   }
-
+  fibersWithEffects = []
   oldEffects = effects
   deletions = []
   effects = []
@@ -249,6 +250,7 @@ function updateFunctionComponent(fiber) {
    */
   wipFiber = fiber
   wipFiber.hooks = []
+  wipFiber.effects = []
   hookIndex = 0
   const isFragment = fiber.type === Symbol.for('react.fragment')
   const children = isFragment
@@ -370,9 +372,11 @@ export function useReducer(initial, reducerFn) {
     nextUnitOfWork = {
       type: currentFiber.type,
       hooks: currentFiber.hooks,
+      effects: currentFiber.effects,
       props: currentFiber.props,
       dom: currentFiber.dom,
       alternate: currentFiber,
+      child: currentFiber.child,
       reconcileSibling: false,
       effectTag: 'UPDATE',
     }
@@ -446,37 +450,46 @@ function useSyncExternalStore(subscribe, getSnapshot) {
 }
 
 function useEffect(effect, deps) {
-  effects.push({ effect, deps })
+  if (wipFiber.effects) {
+    wipFiber.effects.push({ effect, deps })
+  } else {
+    wipFiber.effects = [{ effect, deps }]
+  }
+  fibersWithEffects.push(wipFiber)
 }
 function commitEffects() {
-  let hookIndex = effects.length - 1
+  let index = fibersWithEffects.length - 1
+  while (index >= 0) {
+    const fiber = fibersWithEffects[index]
+    const oldFiber = fiber.alternate
 
-  while (hookIndex >= 0) {
-    const hook = effects[hookIndex]
-    const oldHook = oldEffects[hookIndex]
-    if (!oldHook) {
-      // mounting phase
-      const cleanup = hook.effect()
-      hook.cleanup = cleanup
-    } else {
-      const dpesHaveChanged = hook.deps.some(
-        (d, i) => !Object.is(d, oldHook.deps[i])
-      )
+    for (
+      let effectIndex = 0;
+      effectIndex < fiber.effects.length;
+      effectIndex++
+    ) {
+      const newEffect = fiber.effects[effectIndex]
+      if (!oldFiber) {
+        const cleanup = newEffect.effect()
+        newEffect.cleanup = cleanup
+      } else {
+        const oldEffect = oldFiber.effects[effectIndex]
+        const depsHaveChanged = newEffect.deps.some(
+          (d, i) => !Object.is(d, oldEffect.deps[i])
+        )
 
-      if (dpesHaveChanged) {
-        if (oldHook.cleanup) {
-          oldHook.cleanup()
+        if (depsHaveChanged) {
+          oldEffect.cleanup?.()
         }
 
-        hook.cleanup = hook.effect()
+        newEffect.cleanup = newEffect.effect()
       }
     }
 
-    hookIndex--
+    index--
   }
 
-  oldEffects = effects
-  effects = []
+  fibersWithEffects = []
 }
 
 function useContext(context) {
