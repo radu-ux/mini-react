@@ -1,0 +1,96 @@
+* {
+  margin: 0;
+  padding: 0;
+}
+
+.todos {
+  padding: 1em;
+  max-width: 800px;
+  display: flex;
+  flex-direction: column;
+  row-gap: 1em;
+  margin: auto;
+  border: 1px solid black;
+  height: 800px;
+  overflow: hidden;
+}
+
+.todos__form {
+  display: flex;
+  flex-direction: column;
+  row-gap: 1em;
+}
+
+.todos__form__input_group {
+  display: flex;
+  flex-direction: column;
+}
+
+.todos__form__input_group > label {
+  font-size: 0.8em;
+  display: none;
+}
+
+.todos__form__input_group > textarea {
+  padding: 1em;
+  font-size: 1.2em;
+  height: 100px;
+  resize: none;
+}
+
+.todos__form__input_group > input {
+  padding: 0.2em 1em;
+  font-size: 1.2em;
+}
+
+.todos__form > button {
+  font-size: 1em;
+  padding: 0.5em;
+}
+
+.todos__container {
+  justify-content: center;
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1em;
+  overflow: auto;
+}
+
+.todo {
+  display: flex;
+  row-gap: 0.5em;
+  flex-direction: column;
+  border: 1px solid black;
+  padding: 0.5em 1em;
+  width: 150px;
+  height: 200px;
+  position: relative;
+  overflow: hidden;
+}
+
+.todo__title {
+  font-size: 1.5em;
+  padding: 0.3em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.todo__createdAt {
+  font-size: 0.8em;
+}
+
+.todo__description {
+  height: 100%;
+  font-size: 1.1em;
+  word-wrap: break-word;
+  overflow: hidden;
+}
+
+.todo__remove {
+  position: absolute;
+  top: 0;
+  right: 0;
+  padding: 0.1em;
+}

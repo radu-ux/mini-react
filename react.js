@@ -22,6 +22,7 @@ let effects = []
 let fibersWithEffects = []
 let oldEffects = []
 let hookIndex = 0
+let updateQueue = []
 
 /** COMMIT PAHSE */
 const isEvent = (key) => key.startsWith('on')
@@ -83,10 +84,14 @@ function createDom(fiber) {
 }
 
 function commitDeletion(domParent, fiber) {
-  if (fiber.dom) {
-    domParent.removeChild(fiber.dom)
-  } else {
-    commitDeletion(domParent, fiber.child)
+  try {
+    if (fiber.dom) {
+      domParent.removeChild(fiber.dom)
+    } else {
+      commitDeletion(domParent, fiber.child)
+    }
+  } catch {
+    //
   }
 }
 
@@ -137,6 +142,7 @@ function commitRoot() {
   resetCurrentRoot()
   // currentRoot = wipRoot
   wipRoot = null
+  updateQueue = []
   commitEffects()
 }
 
@@ -201,6 +207,8 @@ function reconcileChildren(wipFiber, children) {
     let newFiber = null
     const element = children[childIndex]
     const isSameType = oldFiber && element && element.type === oldFiber.type
+    const isSameKey =
+      oldFiber && element && oldFiber.props.key === element.props.key
 
     if (isSameType) {
       newFiber = {
@@ -224,14 +232,17 @@ function reconcileChildren(wipFiber, children) {
       }
     }
 
-    if (!element && oldFiber) {
+    if (
+      (!element && oldFiber && !wipFiber.child) ||
+      (element && oldFiber && isSameType && !isSameKey)
+    ) {
       oldFiber.effectTag = 'DELETION'
       deletions.push(oldFiber)
     }
 
     if (childIndex === 0) {
       wipFiber.child = newFiber
-    } else if (element) {
+    } else if (prevSibiling) {
       prevSibiling.sibling = newFiber
     }
 
@@ -295,7 +306,13 @@ function performUnitOfWork(fiber) {
 
 function workLoop(deadline) {
   let shouldExit = false
-  while (nextUnitOfWork && !shouldExit) {
+  while ((nextUnitOfWork || updateQueue.length > 0) && !shouldExit) {
+    if (!nextUnitOfWork) {
+      nextUnitOfWork = updateQueue.pop()
+      updateFiberInVDOM(nextUnitOfWork)
+      wipRoot = nextUnitOfWork
+      deletions = []
+    }
     nextUnitOfWork = performUnitOfWork(nextUnitOfWork)
     shouldExit = deadline.timeRemaining() < 1
   }
@@ -311,12 +328,29 @@ function workLoop(deadline) {
 
 /** HOOKS */
 
-export function updateFiberInVDOM(fiber, current) {
+function updateFiberInVDOMV2(fiber) {
+  const parent = fiber.parent
+  const child = fiber.parent.child
+
+  if (parent) {
+    parent.child = fiber
+  }
+
+  if (child) {
+    child.sibling = fiber
+  }
+}
+
+function updateFiberInVDOM(fiber, current = currentRoot) {
   if (!current) {
     return
   }
 
-  if (current.child && current.child.type === fiber.type) {
+  if (
+    current.child &&
+    current.child.type === fiber.type &&
+    current.child.props.key === fiber.props.key
+  ) {
     if (current.child.sibling) {
       fiber.sibling = current.child.sibling
     }
@@ -326,7 +360,11 @@ export function updateFiberInVDOM(fiber, current) {
     return
   }
 
-  if (current.sibling && current.sibling.type === fiber.type) {
+  if (
+    current.sibling &&
+    current.sibling.type === fiber.type &&
+    current.sibling.props.key === fiber.props.key
+  ) {
     if (current.sibling.sibling) {
       fiber.sibling = current.sibling.sibling
     }
@@ -341,7 +379,41 @@ export function updateFiberInVDOM(fiber, current) {
   } else if (current.sibling) {
     updateFiberInVDOM(fiber, current.sibling)
   } else if (current.parent) {
-    updateFiberInVDOM(fiber, current.parent.sibling)
+    let parent = current.parent
+    while (parent) {
+      if (parent.sibling) {
+        updateFiberInVDOM(fiber, parent.sibling)
+        return
+      }
+
+      parent = parent.parent
+    }
+  }
+}
+function getAlternateFromCurrentRoot(fiber, current = currentRoot) {
+  if (!current) {
+    return null
+  }
+
+  if (fiber.type === current.type && fiber.props.key === current.props.key) {
+    return current
+  }
+
+  if (current.child) {
+    return getAlternateFromCurrentRoot(fiber, current.child)
+  } else if (current.sibling) {
+    return getAlternateFromCurrentRoot(fiber, current.sibling)
+  } else if (current.parent) {
+    let parent = current.parent
+    while (parent) {
+      if (parent.sibling) {
+        return getAlternateFromCurrentRoot(fiber, parent.sibling)
+      }
+
+      parent = parent.parent
+    }
+
+    return null
   }
 }
 
@@ -368,25 +440,48 @@ export function useReducer(initial, reducerFn) {
   })
 
   const dispatch = (action) => {
-    hook.queue.push(action)
-    nextUnitOfWork = {
-      type: currentFiber.type,
-      hooks: currentFiber.hooks,
-      effects: currentFiber.effects,
-      props: currentFiber.props,
-      dom: currentFiber.dom,
-      alternate: currentFiber,
-      child: currentFiber.child,
-      reconcileSibling: false,
-      effectTag: 'UPDATE',
+    // const alternate = getAlternateFromCurrentRoot(currentFiber)
+
+    // if (
+    //   alternate.hooks[currentHookIndex].dispatch ===
+    //   currentFiber.hooks[currentHookIndex].dispatch
+    // ) {
+    if (hook.dispatch) {
+      hook.dispatch(action)
+    } else {
+      hook.queue.push(action)
+      // nextUnitOfWork = {
+      //   type: currentFiber.type,
+      //   hooks: currentFiber.hooks,
+      //   effects: currentFiber.effects,
+      //   props: currentFiber.props,
+      //   dom: currentFiber.dom,
+      //   alternate: currentFiber,
+      //   child: currentFiber.child,
+      //   reconcileSibling: false,
+      // }
+      // updateFiberInVDOM(nextUnitOfWork)
+      // wipRoot = nextUnitOfWork
+      // deletions = []
+      // currentFiber.alternate = currentFiber
+      // currentFiber.reconcileSibling = false
+      updateQueue.push({
+        type: currentFiber.type,
+        props: currentFiber.props,
+        alternate: currentFiber,
+        reconcileSibling: false,
+      })
+      // } else {
+      //   alternate.hooks[currentHookIndex].dispatch(action)
+      // }
     }
-    wipRoot = { ...currentRoot }
-    updateFiberInVDOM(nextUnitOfWork, wipRoot)
-    wipRoot = nextUnitOfWork
-    deletions = []
   }
 
   wipFiber.hooks.push(hook)
+  // wipFiber.hooks[hookIndex].dispatch = dispatch
+  if (oldHook) {
+    oldHook.dispatch = dispatch
+  }
   hookIndex++
   return [hook.state, dispatch]
 }
@@ -444,7 +539,7 @@ function useSyncExternalStore(subscribe, getSnapshot) {
     return () => {
       unsubscribe()
     }
-  }, [setState])
+  }, [])
 
   return state
 }
@@ -480,9 +575,8 @@ function commitEffects() {
 
         if (depsHaveChanged) {
           oldEffect.cleanup?.()
+          newEffect.cleanup = newEffect.effect()
         }
-
-        newEffect.cleanup = newEffect.effect()
       }
     }
 
